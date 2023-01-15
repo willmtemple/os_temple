@@ -4,16 +4,22 @@ use std::{
     time::Duration,
 };
 
+#[rustfmt::skip]
 const RUN_ARGS: &[&str] = &[
-    "--no-reboot",
+    "-enable-kvm",
     "-s",
-    "-m",
-    "1G",
-    "-device",
-    "intel-hda",
-    "-device",
-    "virtio-net-pci",
+    "-m", "1G",
+    "-cpu", "qemu64",
+    "-vga", "none",
+    "-net", "none",
+    "-netdev", "user,id=host_user",
+    "-drive", "id=store,file=./store.img,if=none",
+    "-device", "virtio-vga,xres=1920,yres=1080",
+    "-device", "intel-hda",
+    "-device", "virtio-net-pci,netdev=host_user",
+    "-device", "virtio-blk-pci,drive=store"
 ];
+
 const TEST_ARGS: &[&str] = &[
     "-device",
     "isa-debug-exit,iobase=0xf4,iosize=0x04",
@@ -44,9 +50,9 @@ fn main() {
     };
 
     let bios = create_disk_images(&kernel_binary_path);
+    println!("Created disk image at `{}`", bios.display());
 
     if no_boot {
-        println!("Created disk image at `{}`", bios.display());
         return;
     }
 

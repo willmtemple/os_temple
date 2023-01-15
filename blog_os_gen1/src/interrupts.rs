@@ -1,10 +1,11 @@
-use crate::{fb::CONSOLE, print, println};
+use crate::{fb::CONSOLE, print, println, task::keyboard::add_scancode};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[repr(u8)]
 pub enum IRQ {
     Timer = 0x20,
+    Keyboard = 0x21,
     Magic = 34,
     Spurious = 255,
 }
@@ -105,6 +106,7 @@ lazy_static::lazy_static! {
         //}
 
         idt[IRQ::Timer.as_usize()].set_handler_fn(irq0_handler);
+        idt[IRQ::Keyboard.as_usize()].set_handler_fn(keyboard_handler);
         idt[IRQ::Magic.as_usize()].set_handler_fn(magic_irq_handler);
         idt[IRQ::Spurious.as_usize()].set_handler_fn(spurious_handler);
 
@@ -161,6 +163,18 @@ extern "x86-interrupt" fn spurious_handler(stack_frame: InterruptStackFrame) {
 
 extern "x86-interrupt" fn irq0_handler(stack_frame: InterruptStackFrame) {
     print!(".");
+
+    unsafe { &crate::APIC }.end_of_interrupt().signal();
+}
+
+extern "x86-interrupt" fn keyboard_handler(stack_frame: InterruptStackFrame) {
+    use x86_64::instructions::port::Port;
+
+    // PS/2 port
+    let mut port = Port::new(0x60);
+    let scancode: u8 = unsafe { port.read() };
+
+    add_scancode(scancode);
 
     unsafe { &crate::APIC }.end_of_interrupt().signal();
 }

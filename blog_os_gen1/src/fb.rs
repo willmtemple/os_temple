@@ -17,6 +17,8 @@ static mut INITIALIZED: bool = false;
 
 const SCALE: usize = 2;
 
+const BLANK_GLYPH: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
+
 pub fn indicate(color: (u8, u8, u8, u8)) {
     let buffer = unsafe { (*FRAMEBUFFER).buffer_mut() };
 
@@ -42,18 +44,26 @@ unsafe fn write_glyph(glyph: &[u8; 8], pos: (usize, usize), color: (u8, u8, u8, 
     for line in glyph {
         for lc in 0..scale {
             for bit in 0..8 {
-                if (*line & (1 << bit)) != 0 {
-                    let pixel_offset =
-                        (y_offset + lc) * info.horizontal_resolution * info.bytes_per_pixel;
-                    let pixel_offset =
-                        pixel_offset + ((x_offset + (bit * scale)) * info.bytes_per_pixel);
+                let pixel_offset =
+                    (y_offset + lc) * info.horizontal_resolution * info.bytes_per_pixel;
+                let pixel_offset =
+                    pixel_offset + ((x_offset + (bit * scale)) * info.bytes_per_pixel);
 
+                if (*line & (1 << bit)) != 0 {
                     for cc in 0..scale {
                         let pixel_offset = pixel_offset + cc * info.bytes_per_pixel;
                         buffer[pixel_offset] = color.0;
                         buffer[pixel_offset + 1] = color.1;
                         buffer[pixel_offset + 2] = color.2;
                         buffer[pixel_offset + 3] = color.3;
+                    }
+                } else {
+                    for cc in 0..scale {
+                        let pixel_offset = pixel_offset + cc * info.bytes_per_pixel;
+                        buffer[pixel_offset] = 0;
+                        buffer[pixel_offset + 1] = 0;
+                        buffer[pixel_offset + 2] = 0;
+                        buffer[pixel_offset + 3] = 0;
                     }
                 }
             }
@@ -177,6 +187,21 @@ impl FbConsole {
         self.line_position = 0;
     }
 
+    pub fn clear_line(&mut self) {
+        self.column_position = 0;
+        let line_length = unsafe { FRAMEBUFFERINFO }.horizontal_resolution / (8 * self.scale);
+        for idx in 0..line_length {
+            unsafe {
+                write_glyph(
+                    &BLANK_GLYPH,
+                    (idx, self.line_position),
+                    self.color,
+                    self.scale,
+                );
+            }
+        }
+    }
+
     fn scroll(&mut self) {
         unsafe {
             let buffer = (*FRAMEBUFFER).buffer_mut();
@@ -197,6 +222,20 @@ impl FbConsole {
 
     pub fn set_color(&mut self, color: (u8, u8, u8, u8)) {
         self.color = color;
+    }
+
+    pub fn delete_backwards(&mut self) {
+        if self.column_position > 0 {
+            self.column_position -= 1;
+            unsafe {
+                write_glyph(
+                    &BLANK_GLYPH,
+                    (self.column_position, self.line_position),
+                    self.color,
+                    self.scale,
+                )
+            };
+        }
     }
 }
 
@@ -229,7 +268,7 @@ pub fn _print(args: core::fmt::Arguments) {
 #[macro_export]
 macro_rules! print {
     ($($arg:tt)*) => {
-        ($crate::fb::_print(format_args!($($arg)*)));
+        ($crate::fb::_print(format_args!($($arg)*)))
     };
 }
 

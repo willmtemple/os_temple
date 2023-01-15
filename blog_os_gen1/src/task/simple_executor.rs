@@ -4,11 +4,11 @@ use super::Task;
 use alloc::collections::VecDeque;
 
 #[derive(Default)]
-pub struct Executor {
+pub struct SimpleExecutor {
     task_queue: VecDeque<Task>,
 }
 
-impl Executor {
+impl SimpleExecutor {
     pub fn new() -> Self {
         Self {
             ..Default::default()

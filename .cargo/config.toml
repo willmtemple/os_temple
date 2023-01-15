@@ -6,3 +6,25 @@ kbuild = "build --target x86_64-custom.json -Zbuild-std=core,alloc -Zbuild-std-f
 kimage = "run --target x86_64-custom.json -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem -- --no-run"
 krun = "run --target x86_64-custom.json -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem"
 ktest = "test --target x86_64-custom.json -Zbuild-std=core,alloc -Zbuild-std-features=compiler-builtins-mem"
+
+[profile.custom-release]
+inherits = "release"
+panic = "abort"
+target = "x86_64-custom.json"
+build-std-features = ["compiler-builtins-mem"]
+build-std = ["core", "compiler_builtins"]
+
+[profile.custom-release.build]
+target = "x86_64-custom.json"
+
+[profile.custom-dev]
+inherits = "dev"
+panic = "abort"
+target = "x86_64-custom.json"
+
+[profile.custom-dev.unstable]
+build-std-features = ["compiler-builtins-mem"]
+build-std = ["core", "compiler_builtins"]
+
+[profile.custom-dev.build]
+target = "x86_64-custom.json"
