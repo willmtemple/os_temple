@@ -3,13 +3,14 @@ name = "vmm_test_bin"
 version = "0.1.0"
 edition = "2021"
 
-[profile.dev]
-panic = "abort"
-
-[profile.release]
-panic = "abort"
-
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 x86_64 = "0.14"
+spin = "0.9"
+libvmm = { path = "../lib/vmm" }
+font8x8 = { version = "0.3", default-features = false, features = ["unicode"] }
+lazy_static = { version = "1.4", features = ["spin_no_std"] }
+paste = "1"
+linked_list_allocator = "0.10"
+apic = { git = "https://github.com/rust-osdev/apic" }

@@ -11,19 +11,18 @@
 
 extern crate alloc;
 
-use acpi::{sdt::Signature, InterruptModel};
+use acpi::InterruptModel;
 use alloc::boxed::Box;
 
 use apic::io_apic::{values::DeliveryMode, IoApicBase};
 use bootloader::{boot_info::PixelFormat, entry_point, BootInfo};
 use core::panic::PanicInfo;
-use pci_types::HeaderType;
 use x86_64::VirtAddr;
 
 use crate::{
     interrupts::IRQ,
     memory::BootInfoFrameAllocator,
-    pci::{ExtendedConfiguration, IoConfiguration},
+    pci::IoConfiguration,
     task::{executor::Executor, keyboard::handle_keypresses, Task},
 };
 

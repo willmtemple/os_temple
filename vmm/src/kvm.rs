@@ -1,29 +1,24 @@
-use std::{ffi::c_void, mem, ptr::null_mut};
+use std::{ffi::c_void, fmt::Display, mem, ptr::null_mut, sync::mpsc::Receiver};
 
 use elfloader::ElfBinary;
-use log::info;
+use log::{error, info};
 use nix::{
     errno::{errno, Errno},
     fcntl::OFlag,
-    ioctl_read, ioctl_write_int_bad, ioctl_write_ptr,
     libc::{
-        madvise, memcpy, mmap, MADV_MERGEABLE, MAP_ANONYMOUS, MAP_FAILED, MAP_NORESERVE,
-        MAP_PRIVATE, MAP_SHARED, PROT_READ, PROT_WRITE,
+        madvise, mmap, MADV_MERGEABLE, MAP_ANONYMOUS, MAP_FAILED, MAP_NORESERVE, MAP_PRIVATE,
+        MAP_SHARED, PROT_READ, PROT_WRITE,
     },
-    request_code_none,
     sys::stat::Mode,
 };
 
 use thiserror::Error;
-use x86_64::{
-    structures::paging::{Mapper, OffsetPageTable, PageTable, PageTableFlags, PhysFrame},
-    PhysAddr, VirtAddr,
-};
+use x86_64::structures::paging::PageTable;
 
 use crate::ffi::kvm::{
     kvm_regs, kvm_run, kvm_segment, kvm_sregs, kvm_userspace_memory_region, CR0_AM, CR0_ET, CR0_MP,
-    CR0_NE, CR0_PE, CR0_PG, CR0_WP, CR4_PAE, EFER_LMA, EFER_LME, KVMIO, KVM_EXIT_HLT, KVM_EXIT_IO,
-    KVM_EXIT_IO_OUT, KVM_EXIT_SHUTDOWN, PDE64_PRESENT, PDE64_PS, PDE64_RW, PDE64_USER,
+    CR0_NE, CR0_PE, CR0_PG, CR0_WP, CR4_PAE, EFER_LMA, EFER_LME, KVM_EXIT_IO_OUT, PDE64_PRESENT,
+    PDE64_PS, PDE64_RW,
 };
 
 pub struct KVM {
@@ -48,10 +43,153 @@ pub enum KvmError {
     FailedSyscall(&'static str, Errno),
 
     #[error("unhandled KVM exit reason {0}")]
-    UnexpectedExit(u32),
+    UnexpectedExit(KvmExit),
 
-    #[error("unhandled IO operation: {0} {1}")]
-    UnhandledIo(u32, u16),
+    #[error("unhandled IO operation: {0} 0x{1:#04x}")]
+    UnhandledIo(KvmIoDirection, u16),
+}
+
+#[repr(u32)]
+#[derive(Debug)]
+pub enum KvmExit {
+    Unknown = 0,
+    Exception = 1,
+    Io = 2,
+    Hypercall = 3,
+    Debug = 4,
+    Hlt = 5,
+    Mmio = 6,
+    IrqWindowOpen = 7,
+    Shutdown = 8,
+    FailEntry = 9,
+    Intr = 10,
+    SetTpr = 11,
+    TprAccess = 12,
+    S390Sieic = 13,
+    S390Reset = 14,
+    Dcr = 15, /* deprecated */
+    Nmi = 16,
+    InternalError = 17,
+    Osi = 18,
+    PaprHcall = 19,
+    S390Ucontrol = 20,
+    Watchdog = 21,
+    S390Tsch = 22,
+    Epr = 23,
+    SystemEvent = 24,
+    S390Stsi = 25,
+    IoapicEoi = 26,
+    Hyperv = 27,
+    ArmNisv = 28,
+    X86Rdmsr = 29,
+    X86Wrmsr = 30,
+    DirtyRingFull = 31,
+    ApResetHold = 32,
+    X86BusLock = 33,
+    Xen = 34,
+    RiscvSbi = 35,
+}
+
+impl KvmExit {
+    pub unsafe fn from_u32_unchecked(value: u32) -> Self {
+        std::mem::transmute(value)
+    }
+
+    pub fn from_u32(value: u32) -> Option<Self> {
+        match value {
+            0..=35 => Some(unsafe { Self::from_u32_unchecked(value) }),
+            _ => None,
+        }
+    }
+}
+
+impl Default for KvmExit {
+    fn default() -> Self {
+        KvmExit::Unknown
+    }
+}
+
+impl Display for KvmExit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                KvmExit::Unknown => "UNKNOWN",
+                KvmExit::Exception => "EXCEPTION",
+                KvmExit::Io => "IO",
+                KvmExit::Hypercall => "HYPERCALL",
+                KvmExit::Debug => "DEBUG",
+                KvmExit::Hlt => "HLT",
+                KvmExit::Mmio => "MMIO",
+                KvmExit::IrqWindowOpen => "IRQ_WINDOW_OPEN",
+                KvmExit::Shutdown => "SHUTDOWN",
+                KvmExit::FailEntry => "FAIL_ENTRY",
+                KvmExit::Intr => "INTR",
+                KvmExit::SetTpr => "SET_TPR",
+                KvmExit::TprAccess => "TPR_ACCESS",
+                KvmExit::S390Sieic => "S390_SIEIC",
+                KvmExit::S390Reset => "S390_RESET",
+                KvmExit::Dcr => "DCR",
+                KvmExit::Nmi => "NMI",
+                KvmExit::InternalError => "INTERNAL_ERROR",
+                KvmExit::Osi => "OSI",
+                KvmExit::PaprHcall => "PAPR_HCALL",
+                KvmExit::S390Ucontrol => "S390_UCONTROL",
+                KvmExit::Watchdog => "WATCHDOG",
+                KvmExit::S390Tsch => "S390_TSCH",
+                KvmExit::Epr => "EPR",
+                KvmExit::SystemEvent => "SYSTEM_EVENT",
+                KvmExit::S390Stsi => "S390_STSI",
+                KvmExit::IoapicEoi => "IOAPIC_EOI",
+                KvmExit::Hyperv => "HYPERV",
+                KvmExit::ArmNisv => "ARM_NISV",
+                KvmExit::X86Rdmsr => "X86_RDMSR",
+                KvmExit::X86Wrmsr => "X86_WRMSR",
+                KvmExit::DirtyRingFull => "DIRTY_RING_FULL",
+                KvmExit::ApResetHold => "AP_RESET_HOLD",
+                KvmExit::X86BusLock => "X86_BUS_LOCK",
+                KvmExit::Xen => "XEN",
+                KvmExit::RiscvSbi => "RISCV_SBI",
+            }
+        )
+    }
+}
+
+#[derive(Debug)]
+#[repr(u32)]
+pub enum KvmIoDirection {
+    In = 0,
+    Out = 1,
+}
+
+impl KvmIoDirection {
+    pub unsafe fn from_u32_unchecked(value: u32) -> Self {
+        std::mem::transmute(value)
+    }
+
+    pub fn from_u32(value: u32) -> Option<Self> {
+        match value {
+            0 => Some(KvmIoDirection::In),
+            1 => Some(KvmIoDirection::Out),
+            _ => None,
+        }
+    }
+}
+
+impl Display for KvmIoDirection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{}",
+            match self {
+                KvmIoDirection::In => "IN",
+                KvmIoDirection::Out => "OUT",
+                #[allow(unreachable_patterns)]
+                _ => "UNKNOWN",
+            }
+        )
+    }
 }
 
 pub trait IntoIoctlError {
@@ -66,41 +204,45 @@ impl<T> IntoIoctlError for Result<T, Errno> {
     }
 }
 
-ioctl_write_int_bad!(kvm_get_api_version, request_code_none!(KVMIO, 0));
+mod ioctls {
+    use nix::{ioctl_read, ioctl_write_int_bad, ioctl_write_ptr, request_code_none};
 
-ioctl_write_int_bad!(kvm_create_vm, request_code_none!(KVMIO, 1));
+    use crate::ffi::kvm::{kvm_regs, kvm_sregs, kvm_userspace_memory_region, KVMIO};
 
-ioctl_write_ptr!(
-    kvm_set_user_memory_region,
-    KVMIO,
-    0x46,
-    kvm_userspace_memory_region
-);
+    ioctl_write_int_bad!(kvm_get_api_version, request_code_none!(KVMIO, 0));
 
-ioctl_write_int_bad!(kvm_get_vcpu_mmap_size, request_code_none!(KVMIO, 0x04));
+    ioctl_write_int_bad!(kvm_create_vm, request_code_none!(KVMIO, 1));
 
-ioctl_write_int_bad!(kvm_create_vcpu, request_code_none!(KVMIO, 0x41));
+    ioctl_write_ptr!(
+        kvm_set_user_memory_region,
+        KVMIO,
+        0x46,
+        kvm_userspace_memory_region
+    );
 
-ioctl_write_int_bad!(kvm_set_tss_addr, request_code_none!(KVMIO, 0x47));
+    ioctl_write_int_bad!(kvm_get_vcpu_mmap_size, request_code_none!(KVMIO, 0x04));
 
-ioctl_write_int_bad!(kvm_run, request_code_none!(KVMIO, 0x80));
+    ioctl_write_int_bad!(kvm_create_vcpu, request_code_none!(KVMIO, 0x41));
 
-ioctl_read!(kvm_get_regs, KVMIO, 0x81, kvm_regs);
+    ioctl_write_int_bad!(kvm_set_tss_addr, request_code_none!(KVMIO, 0x47));
 
-ioctl_write_ptr!(kvm_set_regs, KVMIO, 0x82, kvm_regs);
+    ioctl_write_int_bad!(kvm_run, request_code_none!(KVMIO, 0x80));
 
-ioctl_read!(kvm_get_sregs, KVMIO, 0x83, kvm_sregs);
+    ioctl_read!(kvm_get_regs, KVMIO, 0x81, kvm_regs);
 
-ioctl_write_ptr!(kvm_set_sregs, KVMIO, 0x84, kvm_sregs);
+    ioctl_write_ptr!(kvm_set_regs, KVMIO, 0x82, kvm_regs);
 
-const PAYLOAD: &[u8] = include_bytes!("../simple_bin/payload64.text");
+    ioctl_read!(kvm_get_sregs, KVMIO, 0x83, kvm_sregs);
+
+    ioctl_write_ptr!(kvm_set_sregs, KVMIO, 0x84, kvm_sregs);
+}
 
 impl KVM {
     pub fn open() -> Result<Self, KvmError> {
         let sys_fd = nix::fcntl::open("/dev/kvm", OFlag::O_RDWR, Mode::empty())
             .map_err(KvmError::CouldNotOpen)?;
 
-        let api_version = unsafe { kvm_get_api_version(sys_fd, 0) }
+        let api_version = unsafe { ioctls::kvm_get_api_version(sys_fd, 0) }
             .map_err(|e| KvmError::FailedIoctl("kvm_get_api_version", e))?
             as u32;
 
@@ -112,11 +254,12 @@ impl KVM {
     }
 
     pub fn create_vm(&self) -> Result<VmHandle, KvmError> {
-        let vm_fd = unsafe { kvm_create_vm(self.fd, 0) }.map_err_kvm("kvm_create_vm")?;
+        let vm_fd = unsafe { ioctls::kvm_create_vm(self.fd, 0) }.map_err_kvm("kvm_create_vm")?;
 
         // TODO: may want to configure this
         #[allow(overflowing_literals)]
-        unsafe { kvm_set_tss_addr(vm_fd, 0xfffbd000_i32) }.map_err_kvm("kvm_set_tss_addr")?;
+        unsafe { ioctls::kvm_set_tss_addr(vm_fd, 0xfffbd000_i32) }
+            .map_err_kvm("kvm_set_tss_addr")?;
 
         Ok(VmHandle { fd: vm_fd })
     }
@@ -157,7 +300,7 @@ impl VmHandle {
             userspace_addr: ptr as u64,
         };
 
-        unsafe { kvm_set_user_memory_region(self.fd, &mut memreg) }
+        unsafe { ioctls::kvm_set_user_memory_region(self.fd, &mut memreg) }
             .map_err_kvm("kvm_set_user_memory_region")?;
 
         Ok(ptr)
@@ -171,10 +314,10 @@ pub struct CpuHandle {
 
 impl CpuHandle {
     pub fn new(vm: &VmHandle, sys_fd: i32) -> Result<Self, KvmError> {
-        let cpu_fd = unsafe { kvm_create_vcpu(vm.fd, 0) }.map_err_kvm("kvm_create_vcpu")?;
+        let cpu_fd = unsafe { ioctls::kvm_create_vcpu(vm.fd, 0) }.map_err_kvm("kvm_create_vcpu")?;
 
-        let vcpu_mmap_size =
-            unsafe { kvm_get_vcpu_mmap_size(sys_fd, 0) }.map_err_kvm("kvm_get_vcpu_mmap_size")?;
+        let vcpu_mmap_size = unsafe { ioctls::kvm_get_vcpu_mmap_size(sys_fd, 0) }
+            .map_err_kvm("kvm_get_vcpu_mmap_size")?;
 
         let kvm_run = unsafe {
             mmap(
@@ -198,9 +341,15 @@ impl CpuHandle {
     }
 }
 
-pub fn run(cpu: &mut CpuHandle, memory: *mut c_void, start_addr: u64) -> Result<(), KvmError> {
+pub fn run(
+    signal: Receiver<()>,
+    cpu: &mut CpuHandle,
+    memory: *mut c_void,
+    memory_size: usize,
+    path: &str,
+) -> Result<(), KvmError> {
     #[inline]
-    unsafe fn setup_long_mode(memory: *mut c_void, sregs: &mut kvm_sregs, start_addr: u64) {
+    unsafe fn setup_long_mode(memory: *mut c_void, sregs: &mut kvm_sregs, base: u64) {
         // TODO: I am just manually mapping two bigpages here. Need a full allocator for proper elf loading.
         let pml4_addr = 0x2000_u64;
         let pml4 = memory.add(pml4_addr as usize) as *mut u64;
@@ -211,10 +360,14 @@ pub fn run(cpu: &mut CpuHandle, memory: *mut c_void, start_addr: u64) -> Result<
         let pd_addr = 0x4000_u64;
         let pd = memory.add(pd_addr as usize) as *mut u64;
 
-        *pml4 = ((PDE64_PRESENT | PDE64_RW | PDE64_USER) as u64) | pdpt_addr;
-        *pdpt = ((PDE64_PRESENT | PDE64_RW | PDE64_USER) as u64) | pd_addr;
-        *pd = (PDE64_PRESENT | PDE64_RW | PDE64_USER | PDE64_PS) as u64;
-        *(pd.add(1)) = ((PDE64_PRESENT | PDE64_RW | PDE64_USER | PDE64_PS) as u64) | (2 << 20);
+        *pml4 = ((PDE64_PRESENT | PDE64_RW) as u64) | pdpt_addr;
+        *pdpt = ((PDE64_PRESENT | PDE64_RW) as u64) | pd_addr;
+        *pd = (PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64;
+        *(pd.add(1)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (2 << 20);
+        *(pd.add(2)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (4 << 20);
+        *(pd.add(3)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (6 << 20);
+        *(pd.add(4)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (8 << 20);
+        *(pd.add(5)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (0xa << 20);
 
         sregs.cr3 = pml4_addr as u64;
         sregs.cr4 = CR4_PAE as u64;
@@ -231,13 +384,13 @@ pub fn run(cpu: &mut CpuHandle, memory: *mut c_void, start_addr: u64) -> Result<
             }
         }
 
-        setup_64bit_code_segment(sregs, start_addr);
+        setup_64bit_code_segment(sregs, base);
     }
 
     #[inline]
-    unsafe fn setup_64bit_code_segment(sregs: &mut kvm_sregs, start_addr: u64) {
+    unsafe fn setup_64bit_code_segment(sregs: &mut kvm_sregs, base: u64) {
         let mut segment = kvm_segment {
-            base: start_addr,
+            base,
             limit: 0xffffffff,
             selector: 1 << 3,
             present: 1,
@@ -262,47 +415,55 @@ pub fn run(cpu: &mut CpuHandle, memory: *mut c_void, start_addr: u64) -> Result<
         sregs.ss = segment;
     }
 
-    let mut sregs = unsafe { mem::zeroed::<kvm_sregs>() };
-    let mut regs = unsafe { mem::zeroed::<kvm_regs>() };
-
-    unsafe { kvm_get_sregs(cpu.fd, &mut sregs) }.map_err_kvm("kvm_get_sregs")?;
-
-    unsafe {
-        setup_long_mode(memory, &mut sregs, start_addr);
-    }
-
-    unsafe { kvm_set_sregs(cpu.fd, &mut sregs) }.map_err_kvm("kvm_set_sregs")?;
-
-    regs.rflags = 2;
-    regs.rip = start_addr;
-    regs.rsp = 4 << 20;
-
-    unsafe { kvm_set_regs(cpu.fd, &mut regs) }.map_err_kvm("kvm_set_regs")?;
-
-    // unsafe { memcpy(memory, PAYLOAD.as_ptr() as *const c_void, PAYLOAD.len()) };
-
-    let kernel_binary = std::fs::read("../target/x86_64-custom/release/vmm_test_bin")
-        .expect("failed to open kernel ELF");
+    let kernel_binary = std::fs::read(path).expect("failed to open kernel ELF");
 
     let elf = ElfBinary::new(&kernel_binary.as_slice())
         .expect("failed to parse kernel ELF (is it an ELF file)");
 
-    let mut loader = crate::elf::ExampleLoader::new(memory, 0x0000);
+    let relo = 0x200000;
+
+    let mut loader = crate::elf::BasicLoader::new(memory, relo);
 
     elf.load(&mut loader).expect("failed to load kernel");
+
+    let start_addr = elf.entry_point() + relo;
+    let base = relo;
+
+    info!("ELF entry point is: {start_addr:#x}");
+
+    let mut sregs = unsafe { mem::zeroed::<kvm_sregs>() };
+    let mut regs = unsafe { mem::zeroed::<kvm_regs>() };
+
+    unsafe { ioctls::kvm_get_sregs(cpu.fd, &mut sregs) }.map_err_kvm("kvm_get_sregs")?;
+
+    unsafe {
+        setup_long_mode(memory, &mut sregs, base);
+    }
+
+    unsafe { ioctls::kvm_set_sregs(cpu.fd, &mut sregs) }.map_err_kvm("kvm_set_sregs")?;
+
+    regs.rflags = 2;
+    regs.rip = start_addr;
+    regs.rsp = memory_size as u64;
+
+    unsafe { ioctls::kvm_set_regs(cpu.fd, &mut regs) }.map_err_kvm("kvm_set_regs")?;
+
+    signal.recv().unwrap();
+
+    info!("Display is ready: starting VM.");
 
     run_loop(cpu, memory)
 }
 
-fn run_loop(cpu: &mut CpuHandle, memory: *mut c_void) -> Result<(), KvmError> {
+fn run_loop(cpu: &mut CpuHandle, _memory: *mut c_void) -> Result<(), KvmError> {
     loop {
-        unsafe { kvm_run(cpu.fd, 0) }.map_err_kvm("kvm_run")?;
+        unsafe { ioctls::kvm_run(cpu.fd, 0) }.map_err_kvm("kvm_run")?;
 
-        match unsafe { *cpu.kvm_run }.exit_reason {
+        match KvmExit::from_u32(unsafe { *cpu.kvm_run }.exit_reason).unwrap_or_default() {
             // guest called HLT
-            KVM_EXIT_HLT => break,
+            KvmExit::Hlt => break,
             // guest called port IO IN/OUT
-            KVM_EXIT_IO => {
+            KvmExit::Io => {
                 let direction = unsafe { (*cpu.kvm_run).__bindgen_anon_1.io.direction } as u32;
                 let port = unsafe { (*cpu.kvm_run).__bindgen_anon_1.io.port };
 
@@ -316,24 +477,32 @@ fn run_loop(cpu: &mut CpuHandle, memory: *mut c_void) -> Result<(), KvmError> {
                     });
                 } else {
                     // TODO: fault the vcpu or something other than killing the process
-                    return Err(KvmError::UnhandledIo(direction, port));
+                    let mut regs = unsafe { mem::zeroed::<kvm_regs>() };
+                    unsafe {
+                        ioctls::kvm_get_regs(cpu.fd, &mut regs)
+                            .expect(&format!("unexpected io ({port}) failed to get regs"));
+                    }
+
+                    error!("Unexpected exit: {:#?}", regs);
+                    return Err(KvmError::UnhandledIo(
+                        unsafe { KvmIoDirection::from_u32_unchecked(direction) },
+                        port,
+                    ));
                 }
             }
             e => {
+                let mut regs = unsafe { mem::zeroed::<kvm_regs>() };
+
+                unsafe {
+                    ioctls::kvm_get_regs(cpu.fd, &mut regs)
+                        .expect(&format!("unexpected exit ({e}) failed to get regs"));
+                }
+
+                error!("Unexpected exit: {:#?}", regs);
                 return Err(KvmError::UnexpectedExit(e));
             }
         }
     }
-
-    let mut regs = unsafe { mem::zeroed::<kvm_regs>() };
-    unsafe {
-        kvm_get_regs(cpu.fd, &mut regs).map_err_kvm("kvm_get_regs")?;
-    }
-
-    info!("At exit %rax was {:#X}", regs.rax);
-    info!("At exit *0x400 was {}", unsafe {
-        *((memory.add(0x400)) as *const u64)
-    });
 
     Ok(())
 }

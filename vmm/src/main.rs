@@ -4,18 +4,19 @@ mod elf;
 pub(crate) mod ffi;
 mod kvm;
 
-use std::ffi::c_void;
+mod display;
 
-use elfloader::ElfBinary;
+use std::{env::args, ffi::c_void, sync::mpsc::channel, thread};
+
 use log::info;
 use thiserror::Error;
 
 use kvm::{CpuHandle, KvmError, VmHandle};
 
-struct VirtualMachine {
+struct VirtualMachine<'m> {
     kvm: kvm::KVM,
     vm_handle: VmHandle,
-    memory: *mut c_void,
+    memory: &'m mut [u8],
 }
 
 #[derive(Error, Debug)]
@@ -30,19 +31,19 @@ pub enum VirtualMachineError {
     CreateVCPU(KvmError),
 }
 
-impl VirtualMachine {
+impl<'m> VirtualMachine<'m> {
     fn init() -> Result<Self, VirtualMachineError> {
         let kvm = kvm::KVM::open().map_err(VirtualMachineError::Init)?;
         let vm_handle = kvm.create_vm().map_err(VirtualMachineError::CreateVm)?;
 
         let memory = vm_handle
-            .alloc_primary_memory(0x400000)
+            .alloc_primary_memory(0xc00000)
             .map_err(VirtualMachineError::AllocRam)?;
 
         Ok(VirtualMachine {
             kvm,
             vm_handle,
-            memory,
+            memory: unsafe { std::slice::from_raw_parts_mut(memory as *mut u8, 0xc00000) },
         })
     }
 
@@ -70,8 +71,28 @@ fn main() {
 
     info!("Loading and executing 64-bit payload.");
 
-    kvm::run(&mut cpu.cpu, vm.memory, 0x201120)
-        .expect("encountered an error running virtual machine");
+    let elf_file = args()
+        .nth(1)
+        .expect("expected an argument with the path to a binary");
 
-    info!("Virtual machine halted.")
+    let video_buffer = (vm.memory.as_ptr() as usize) + (3 << 20);
+
+    let (send, recv) = channel::<()>();
+
+    let display_thread = thread::spawn(move || display::start(send, video_buffer));
+
+    kvm::run(
+        recv,
+        &mut cpu.cpu,
+        vm.memory.as_ptr() as *mut c_void,
+        vm.memory.len(),
+        &elf_file,
+    )
+    .expect("encountered an error running virtual machine");
+
+    info!("All CPUs suspended. VM halting.");
+
+    display_thread
+        .join()
+        .expect("failed to join display thread");
 }
