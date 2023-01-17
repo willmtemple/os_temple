@@ -1,5 +1,5 @@
 [target.'cfg(target_os = "none")']
-runner = "cargo run --package vmm --"
+runner = "cargo run --release --package vmm --"
 rustflags = ["-C", "relocation-model=pie"]
 
 [alias]

@@ -1,4 +1,4 @@
-use crate::{fb::CONSOLE, println /*task::keyboard::add_scancode*/};
+use crate::{fb::console::CONSOLE, print, println};
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -101,11 +101,11 @@ lazy_static::lazy_static! {
 
         idt.machine_check.set_handler_fn(machine_check);
 
-        //for idx in 0x20..0xFF {
-        //    idt[idx].set_handler_fn(spurious_handler);
-        //}
+        for idx in 0x20..0xFF {
+           idt[idx].set_handler_fn(spurious_handler);
+        }
 
-        // idt[IRQ::Timer.as_usize()].set_handler_fn(irq0_handler);
+        idt[IRQ::Timer.as_usize()].set_handler_fn(irq0_handler);
         // idt[IRQ::Keyboard.as_usize()].set_handler_fn(keyboard_handler);
         idt[IRQ::Magic.as_usize()].set_handler_fn(magic_irq_handler);
         idt[IRQ::Spurious.as_usize()].set_handler_fn(spurious_handler);
@@ -161,11 +161,21 @@ extern "x86-interrupt" fn spurious_handler(stack_frame: InterruptStackFrame) {
     panic!("Spurious interrupt: {:?}", stack_frame);
 }
 
-// extern "x86-interrupt" fn irq0_handler(stack_frame: InterruptStackFrame) {
-//     print!(".");
+extern "x86-interrupt" fn irq0_handler(stack_frame: InterruptStackFrame) {
+    print!(".");
 
-//     unsafe { &crate::APIC }.end_of_interrupt().signal();
-// }
+    unsafe {
+        let count = &mut crate::APIC.timer_initial_count();
+
+        let mut value = count.read();
+
+        value.set(0x80000);
+
+        count.write(value);
+    }
+
+    unsafe { &crate::APIC }.end_of_interrupt().signal();
+}
 
 // extern "x86-interrupt" fn keyboard_handler(stack_frame: InterruptStackFrame) {
 //     use x86_64::instructions::port::Port;

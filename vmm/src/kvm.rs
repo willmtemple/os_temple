@@ -16,10 +16,12 @@ use thiserror::Error;
 use x86_64::structures::paging::PageTable;
 
 use crate::ffi::kvm::{
-    kvm_regs, kvm_run, kvm_segment, kvm_sregs, kvm_userspace_memory_region, CR0_AM, CR0_ET, CR0_MP,
-    CR0_NE, CR0_PE, CR0_PG, CR0_WP, CR4_PAE, EFER_LMA, EFER_LME, KVM_EXIT_IO_OUT, PDE64_PRESENT,
-    PDE64_PS, PDE64_RW,
+    kvm_irqchip, kvm_lapic_state, kvm_pit_config, kvm_regs, kvm_run, kvm_segment, kvm_sregs,
+    kvm_userspace_memory_region, CR0_AM, CR0_ET, CR0_MP, CR0_NE, CR0_PE, CR0_PG, CR0_WP, CR4_PAE,
+    EFER_LMA, EFER_LME, KVM_EXIT_IO_OUT, PDE64_PRESENT, PDE64_PS, PDE64_RW,
 };
+
+use self::ioctls::kvm_get_irqchip;
 
 pub struct KVM {
     pub fd: i32,
@@ -205,9 +207,14 @@ impl<T> IntoIoctlError for Result<T, Errno> {
 }
 
 mod ioctls {
-    use nix::{ioctl_read, ioctl_write_int_bad, ioctl_write_ptr, request_code_none};
+    use nix::{
+        ioctl_read, ioctl_readwrite, ioctl_write_int_bad, ioctl_write_ptr, request_code_none,
+    };
 
-    use crate::ffi::kvm::{kvm_regs, kvm_sregs, kvm_userspace_memory_region, KVMIO};
+    use crate::ffi::kvm::{
+        kvm_irqchip, kvm_lapic_state, kvm_pit_config, kvm_regs, kvm_sregs,
+        kvm_userspace_memory_region, KVMIO,
+    };
 
     ioctl_write_int_bad!(kvm_get_api_version, request_code_none!(KVMIO, 0));
 
@@ -235,6 +242,18 @@ mod ioctls {
     ioctl_read!(kvm_get_sregs, KVMIO, 0x83, kvm_sregs);
 
     ioctl_write_ptr!(kvm_set_sregs, KVMIO, 0x84, kvm_sregs);
+
+    ioctl_write_int_bad!(kvm_create_irqchip, request_code_none!(KVMIO, 0x60));
+
+    ioctl_readwrite!(kvm_get_irqchip, KVMIO, 0x62, kvm_irqchip);
+
+    ioctl_read!(kvm_set_irqchip, KVMIO, 0x63, kvm_irqchip);
+
+    ioctl_read!(kvm_get_lapic, KVMIO, 0x8e, kvm_lapic_state);
+
+    ioctl_write_ptr!(kvm_set_lapic, KVMIO, 0x8f, kvm_lapic_state);
+
+    ioctl_write_ptr!(kvm_create_pit2, KVMIO, 0x77, kvm_pit_config);
 }
 
 impl KVM {
@@ -260,6 +279,51 @@ impl KVM {
         #[allow(overflowing_literals)]
         unsafe { ioctls::kvm_set_tss_addr(vm_fd, 0xfffbd000_i32) }
             .map_err_kvm("kvm_set_tss_addr")?;
+
+        // Always necessary, I think
+        unsafe { ioctls::kvm_create_irqchip(vm_fd, 0) }.map_err_kvm("kvm_create_irqchip")?;
+
+        unsafe {
+            let mut pic1 = kvm_irqchip {
+                chip_id: 0,
+                ..mem::zeroed()
+            };
+            let mut pic2 = kvm_irqchip {
+                chip_id: 1,
+                ..mem::zeroed()
+            };
+            ioctls::kvm_get_irqchip(vm_fd, &mut pic1).map_err_kvm("kvm_get_irqchip")?;
+            ioctls::kvm_get_irqchip(vm_fd, &mut pic2).map_err_kvm("kvm_get_irqchip")?;
+
+            pic1.chip.pic.irq_base = 0x20;
+            pic2.chip.pic.irq_base = 0x20;
+
+            // pic1.chip.pic.imr = 0xFF;
+            // pic2.chip.pic.imr = 0xFF;
+
+            ioctls::kvm_set_irqchip(vm_fd, &mut pic1).map_err_kvm("kvm_set_irqchip")?;
+            ioctls::kvm_set_irqchip(vm_fd, &mut pic2).map_err_kvm("kvm_set_irqchip")?;
+
+            let mut ioapic = kvm_irqchip {
+                chip_id: 2,
+                ..mem::zeroed()
+            };
+
+            ioctls::kvm_get_irqchip(vm_fd, &mut ioapic).map_err_kvm("kgm_get_irqchip")?;
+
+            info!("IOAPIC: {:#?}", ioapic.chip.ioapic.base_address);
+        }
+
+        unsafe {
+            ioctls::kvm_create_pit2(
+                vm_fd,
+                &kvm_pit_config {
+                    flags: 0,
+                    pad: Default::default(),
+                },
+            )
+            .map_err_kvm("kvm_create_pit2")?;
+        }
 
         Ok(VmHandle { fd: vm_fd })
     }
@@ -330,8 +394,18 @@ impl CpuHandle {
             )
         } as *mut kvm_run;
 
+        // unsafe { (*kvm_run).apic_base = 0xfee00000 };
+
         if kvm_run as *mut c_void == MAP_FAILED {
             return Err(KvmError::FailedAlloc("kvm_run", Errno::from_i32(errno())));
+        }
+
+        unsafe {
+            let mut lapic = kvm_lapic_state { ..mem::zeroed() };
+
+            ioctls::kvm_get_lapic(cpu_fd, &mut lapic).map_err_kvm("kvm_get_lapic")?;
+
+            info!("{:#?}", lapic);
         }
 
         Ok(Self {
@@ -360,14 +434,29 @@ pub fn run(
         let pd_addr = 0x4000_u64;
         let pd = memory.add(pd_addr as usize) as *mut u64;
 
+        let pd3_addr = 0x5000_u64;
+        let pd3 = memory.add(pd3_addr as usize) as *mut u64;
+
+        let pe503_addr = 0x6000_u64;
+        let pe503 = memory.add(pe503_addr as usize) as *mut u64;
+
         *pml4 = ((PDE64_PRESENT | PDE64_RW) as u64) | pdpt_addr;
         *pdpt = ((PDE64_PRESENT | PDE64_RW) as u64) | pd_addr;
+        *(pdpt.add(0b11usize)) = ((PDE64_PRESENT | PDE64_RW) as u64) | pd3_addr;
+
         *pd = (PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64;
         *(pd.add(1)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (2 << 20);
         *(pd.add(2)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (4 << 20);
         *(pd.add(3)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (6 << 20);
         *(pd.add(4)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (8 << 20);
         *(pd.add(5)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (0xa << 20);
+        *(pd.add(6)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (0xc << 20);
+        *(pd.add(7)) = ((PDE64_PRESENT | PDE64_RW | PDE64_PS) as u64) | (0xe << 20);
+
+        *(pd3.add(0b111110111usize)) = ((PDE64_PRESENT | PDE64_RW) as u64) | pe503_addr;
+
+        *pe503 = ((PDE64_PRESENT | PDE64_RW) as u64)
+            | 0b0000000000000000_000000000_000000011_111110111_000000000_0000_0000_0000;
 
         sregs.cr3 = pml4_addr as u64;
         sregs.cr4 = CR4_PAE as u64;
@@ -456,12 +545,15 @@ pub fn run(
 }
 
 fn run_loop(cpu: &mut CpuHandle, _memory: *mut c_void) -> Result<(), KvmError> {
-    loop {
+    'outer: loop {
         unsafe { ioctls::kvm_run(cpu.fd, 0) }.map_err_kvm("kvm_run")?;
 
         match KvmExit::from_u32(unsafe { *cpu.kvm_run }.exit_reason).unwrap_or_default() {
             // guest called HLT
-            KvmExit::Hlt => break,
+            KvmExit::Hlt => {
+                info!("hlt");
+                break 'outer;
+            }
             // guest called port IO IN/OUT
             KvmExit::Io => {
                 let direction = unsafe { (*cpu.kvm_run).__bindgen_anon_1.io.direction } as u32;
@@ -483,13 +575,21 @@ fn run_loop(cpu: &mut CpuHandle, _memory: *mut c_void) -> Result<(), KvmError> {
                             .expect(&format!("unexpected io ({port}) failed to get regs"));
                     }
 
-                    error!("Unexpected exit: {:#?}", regs);
+                    error!("Unexpected exit:{:#?}", regs);
                     return Err(KvmError::UnhandledIo(
                         unsafe { KvmIoDirection::from_u32_unchecked(direction) },
                         port,
                     ));
                 }
             }
+            KvmExit::Mmio => unsafe {
+                let mmio = (*cpu.kvm_run).__bindgen_anon_1.mmio;
+                panic!(
+                    "Exit MMIO: apic_base={:#08x}, {:#016x}",
+                    (*cpu.kvm_run).apic_base,
+                    mmio.phys_addr
+                );
+            },
             e => {
                 let mut regs = unsafe { mem::zeroed::<kvm_regs>() };
 
@@ -503,6 +603,13 @@ fn run_loop(cpu: &mut CpuHandle, _memory: *mut c_void) -> Result<(), KvmError> {
             }
         }
     }
+
+    println!(
+        "kvm_run apic_base: {:016x}",
+        unsafe { *cpu.kvm_run }.apic_base
+    );
+
+    println!("Done.");
 
     Ok(())
 }

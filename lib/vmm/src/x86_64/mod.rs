@@ -15,6 +15,16 @@ pub fn exit(exit_code: ExitCode) -> ! {
     hlt();
 }
 
+pub fn waste_time() {
+    let mut idx = 0;
+
+    // TODO: this wastes more or less time depending on how fast the CPU is
+
+    while idx < 50000000 {
+        idx += 1;
+    }
+}
+
 pub fn hlt() -> ! {
     loop {
         x86_64::instructions::hlt();

@@ -2,6 +2,10 @@ use font8x8::UnicodeFonts;
 
 use spin::Mutex;
 
+use crate::fb::psf::get_current_font;
+
+use super::psf::PsfFont;
+
 pub struct FrameBufferInfo {
     // pixel_format: B8G8R8A8 (unorm)
     byte_len: usize,
@@ -23,9 +27,7 @@ const FRAMEBUFFERINFO: FrameBufferInfo = FrameBufferInfo {
 };
 // static mut INITIALIZED: bool = false;
 
-const SCALE: u32 = 2;
-
-const BLANK_GLYPH: [u8; 8] = [0, 0, 0, 0, 0, 0, 0, 0];
+const SCALE: u32 = 1;
 
 // pub fn indicate(buffer: &mut [u8], color: (u8, u8, u8, u8)) {
 //     buffer[0] = color.0;
@@ -40,25 +42,27 @@ fn clear(buffer: &mut [u8]) {
 
 unsafe fn write_glyph(
     buffer: &mut [u8],
-    glyph: &[u8; 8],
+    font: &PsfFont,
+    glyph: &[u8],
     pos: (u32, u32),
     color: (u8, u8, u8, u8),
     scale: u32,
 ) {
     let info = FRAMEBUFFERINFO;
 
-    let x_offset = pos.0 * 8 * scale;
+    let x_offset = pos.0 * font.width * scale;
 
-    let mut y_offset = pos.1 * 8 * scale;
-    for line in glyph {
+    let mut y_offset = pos.1 * font.height * scale;
+    for line_idx in 0..font.height {
+        let line = glyph[(line_idx * (font.width / 8)) as usize];
         for lc in 0..scale {
-            for bit in 0..8 {
+            for bit in 0..font.width {
                 let pixel_offset =
                     (y_offset + lc) * info.horizontal_resolution * info.bytes_per_pixel;
                 let pixel_offset =
                     pixel_offset + ((x_offset + (bit * scale)) * info.bytes_per_pixel);
 
-                if (*line & (1 << bit)) != 0 {
+                if (line & (0b10000000 >> bit)) != 0 {
                     for cc in 0..scale {
                         let pixel_offset = (pixel_offset + cc * info.bytes_per_pixel) as usize;
                         buffer[pixel_offset] = color.0;
@@ -94,6 +98,7 @@ const MISSING_GLYPH: [u8; 8] = [
 ];
 
 pub struct FbConsole {
+    font: &'static PsfFont,
     column_position: u32,
     line_position: u32,
     color: (u8, u8, u8, u8),
@@ -114,41 +119,32 @@ impl FbConsole {
                 self.column_position =
                     ((self.column_position + self.tab_stop) / self.tab_stop) * self.tab_stop;
 
-                let max_x = unsafe { FRAMEBUFFERINFO }.horizontal_resolution - (8 * self.scale);
+                let max_x = unsafe { FRAMEBUFFERINFO }.horizontal_resolution
+                    - (self.font.width * self.scale);
 
-                if (self.column_position * 8 * self.scale) > max_x {
+                if (self.column_position * self.font.width * self.scale) > max_x {
                     self.new_line();
                     self.column_position = self.tab_stop;
                 }
             }
             _ => {
-                if let Some(ref glyph) = font8x8::BASIC_FONTS.get(c) {
-                    unsafe {
-                        write_glyph(
-                            self.buffer(),
-                            glyph,
-                            (self.column_position, self.line_position),
-                            self.color,
-                            self.scale,
-                        )
-                    };
-                } else {
-                    unsafe {
-                        write_glyph(
-                            self.buffer(),
-                            &MISSING_GLYPH,
-                            (self.column_position, self.line_position),
-                            self.color,
-                            self.scale,
-                        )
-                    };
-                };
+                unsafe {
+                    write_glyph(
+                        self.buffer(),
+                        self.font,
+                        self.font.ascii_glyph(c),
+                        (self.column_position, self.line_position),
+                        self.color,
+                        self.scale,
+                    )
+                }
 
                 self.column_position += 1;
 
-                let max_x = unsafe { FRAMEBUFFERINFO }.horizontal_resolution - (8 * self.scale);
+                let max_x = unsafe { FRAMEBUFFERINFO }.horizontal_resolution
+                    - (self.font.width * self.scale);
 
-                if (self.column_position as u32 * 8 * self.scale) > max_x {
+                if (self.column_position as u32 * self.font.width * self.scale) > max_x {
                     self.new_line()
                 }
             }
@@ -172,7 +168,7 @@ impl FbConsole {
 
         let max_y = unsafe { FRAMEBUFFERINFO }.vertical_resolution - (8 * self.scale);
 
-        if (self.line_position as u32 * 8 * self.scale) > max_y {
+        if (self.line_position as u32 * self.font.height * self.scale) > max_y {
             self.scroll();
             self.line_position -= 1;
         }
@@ -186,12 +182,13 @@ impl FbConsole {
 
     pub fn clear_line(&mut self) {
         self.column_position = 0;
-        let line_length = FRAMEBUFFERINFO.horizontal_resolution / (8 * self.scale);
+        let line_length = FRAMEBUFFERINFO.horizontal_resolution / (self.font.width * self.scale);
         for idx in 0..line_length {
             unsafe {
                 write_glyph(
                     self.buffer(),
-                    &BLANK_GLYPH,
+                    self.font,
+                    self.font.blank(),
                     (idx, self.line_position),
                     self.color,
                     self.scale,
@@ -205,7 +202,7 @@ impl FbConsole {
             let buffer = self.buffer();
 
             let single_line_length = (self.scale
-                * 8
+                * self.font.width
                 * FRAMEBUFFERINFO.horizontal_resolution
                 * FRAMEBUFFERINFO.bytes_per_pixel) as usize;
 
@@ -228,7 +225,8 @@ impl FbConsole {
             unsafe {
                 write_glyph(
                     self.buffer(),
-                    &BLANK_GLYPH,
+                    self.font,
+                    self.font.blank(),
                     (self.column_position, self.line_position),
                     self.color,
                     self.scale,
@@ -252,6 +250,7 @@ impl core::fmt::Write for FbConsole {
 lazy_static::lazy_static! {
     pub static ref CONSOLE: Mutex<FbConsole> = {
         let console = FbConsole {
+            font: get_current_font(),
             column_position: 0,
             line_position: 0,
             color: (0xFF, 0xFF, 0xFF, 0xFF),
@@ -277,7 +276,7 @@ pub fn _print(args: core::fmt::Arguments) {
 #[macro_export]
 pub macro print {
     ($($arg:tt)*) => {
-        ($crate::fb::_print(format_args!($($arg)*)))
+        ($crate::fb::console::_print(format_args!($($arg)*)))
     },
 }
 

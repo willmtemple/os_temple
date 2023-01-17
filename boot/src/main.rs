@@ -12,12 +12,7 @@ const RUN_ARGS: &[&str] = &[
     "-cpu", "qemu64",
     "-vga", "none",
     "-net", "none",
-    "-netdev", "user,id=host_user",
-    "-drive", "id=store,file=./store.img,if=none",
     "-device", "virtio-vga,xres=1920,yres=1080",
-    "-device", "intel-hda",
-    "-device", "virtio-net-pci,netdev=host_user",
-    "-device", "virtio-blk-pci,drive=store"
 ];
 
 const TEST_ARGS: &[&str] = &[
@@ -38,6 +33,7 @@ fn main() {
 
     let kernel_binary_path = {
         let path = PathBuf::from(args.next().unwrap());
+        println!("{:?}", path);
         path.canonicalize().unwrap()
     };
     let no_boot = if let Some(arg) = args.next() {

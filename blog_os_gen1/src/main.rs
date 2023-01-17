@@ -6,6 +6,7 @@
 #![feature(const_mut_refs)]
 #![feature(asm_const)]
 #![feature(inline_const)]
+#![feature(let_chains)]
 #![test_runner(test_runner)]
 #![reexport_test_harness_main = "test_main"]
 
@@ -14,7 +15,11 @@ extern crate alloc;
 use acpi::InterruptModel;
 use alloc::boxed::Box;
 
-use apic::io_apic::{values::DeliveryMode, IoApicBase};
+use apic::{
+    io_apic::{values::DeliveryMode, IoApicBase},
+    registers::TimerDivideConfigurationValue,
+    Offset,
+};
 use bootloader::{boot_info::PixelFormat, entry_point, BootInfo};
 use core::panic::PanicInfo;
 use x86_64::VirtAddr;
@@ -208,90 +213,102 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
         & 0xFFFFF000)
         + physical_memory_offset;
 
-    { // LOCAL_APIC_TIMER
+    {
+        // LOCAL_APIC_TIMER
 
-        // println!("LAPIC CMP\t: {:#0} vs {:#0}", lapic_addr, lapic_msr_addr);
+        println!("LAPIC CMP\t: {:#0} vs {:#0}", lapic_addr, lapic_msr_addr);
 
-        // println!(
-        //     "LAPIC\t\t: #{}, version {}",
-        //     local_apic.id().read().id(),
-        //     local_apic.version().read().version()
-        // );
+        println!(
+            "LAPIC\t\t: #{}, version {}",
+            local_apic.id().read().id(),
+            local_apic.version().read().version()
+        );
 
-        // let mut divide = local_apic.timer_divide_configuration().read();
+        let mut divide = local_apic.timer_divide_configuration().read();
 
-        // divide.set(TimerDivideConfigurationValue::Divide1);
+        divide.set(TimerDivideConfigurationValue::Divide1);
 
-        // local_apic.timer_divide_configuration().write(divide);
+        local_apic.timer_divide_configuration().write(divide);
 
-        // let apic_current_count = volatile::Volatile::new(unsafe {
-        //     &mut *((lapic_msr_addr + Offset::TimerCurrentCount as u64) as *mut u32)
-        // });
+        let apic_current_count = volatile::Volatile::new(unsafe {
+            &mut *((lapic_msr_addr + Offset::TimerCurrentCount as u64) as *mut u32)
+        });
 
-        // let mut apic_task_priority = volatile::Volatile::new(unsafe {
-        //     &mut *((lapic_msr_addr + Offset::TaskPriority as u64) as *mut u32)
-        // });
+        let mut apic_task_priority = volatile::Volatile::new(unsafe {
+            &mut *((lapic_msr_addr + Offset::TaskPriority as u64) as *mut u32)
+        });
 
-        // let mut apic_destination_format = volatile::Volatile::new(unsafe {
-        //     &mut *((lapic_msr_addr + Offset::DestinationFormat as u64) as *mut u32)
-        // });
+        let mut apic_destination_format = volatile::Volatile::new(unsafe {
+            &mut *((lapic_msr_addr + Offset::DestinationFormat as u64) as *mut u32)
+        });
 
-        // let mut apic_spurious_interrupt_vector = volatile::Volatile::new(unsafe {
-        //     &mut *((lapic_msr_addr + Offset::SpuriousInterruptVector as u64) as *mut u32)
-        // });
+        let mut apic_spurious_interrupt_vector = volatile::Volatile::new(unsafe {
+            &mut *((lapic_msr_addr + Offset::SpuriousInterruptVector as u64) as *mut u32)
+        });
 
-        // let siv = local_apic.spurious_interrupt_vector().read();
+        let siv = local_apic.spurious_interrupt_vector().read();
 
-        // println!("LAPIC Enable: {}", siv.apic_software_enabled());
-        // println!(
-        //     "LAPIC ENABLE (raw): {:#0x}",
-        //     apic_spurious_interrupt_vector.read()
-        // );
-        // println!("LAPIC SIV\t: {}", siv.vector());
+        println!("LAPIC Enable: {}", siv.apic_software_enabled());
+        println!(
+            "LAPIC ENABLE (raw): {:#0x}",
+            apic_spurious_interrupt_vector.read()
+        );
+        println!("LAPIC SIV\t: {}", siv.vector());
 
-        // local_apic.spurious_interrupt_vector().write(siv);
+        local_apic.spurious_interrupt_vector().write(siv);
 
-        // apic_destination_format.write(0xFFFFFFFF);
-        // apic_task_priority.write(0);
+        apic_destination_format.write(0xFFFFFFFF);
+        apic_task_priority.write(0);
 
-        // println!("LAPIC TIMER CNT: {}", apic_current_count.read());
+        println!("LAPIC TIMER CNT: {}", apic_current_count.read());
 
-        // let mut divide = local_apic.timer_divide_configuration().read();
+        let mut divide = local_apic.timer_divide_configuration().read();
 
-        // divide.set(TimerDivideConfigurationValue::Divide128);
+        divide.set(TimerDivideConfigurationValue::Divide128);
 
-        // local_apic.timer_divide_configuration().write(divide);
+        local_apic.timer_divide_configuration().write(divide);
 
-        // println!("LAPIC TIMER CNT: {}", apic_current_count.read());
+        println!("LAPIC TIMER CNT: {}", apic_current_count.read());
 
-        // let mut timer = local_apic.timer_local_vector_table_entry().read();
+        let mut timer = local_apic.timer_local_vector_table_entry().read();
 
-        // timer.set_vector(IRQ::Timer.as_u8()); //IRQ::Magic.as_u8());
-        // timer.set_mask(false);
-        // timer.set_timer_mode(true);
+        println!("TIMERLINE (RAW): {:#?}", timer);
 
-        // println!("LAPIC TIMER CNT: {}", apic_current_count.read());
+        timer.set_vector(IRQ::Timer.as_u8()); //IRQ::Magic.as_u8());
+        println!("TIMERLINE (RAW): {:#?}", timer);
+        timer.set_mask(false);
+        println!("TIMERLINE (RAW): {:#?}", timer);
+        timer.set_timer_mode(true);
+        println!("TIMERLINE (RAW): {:#?}", timer);
 
-        // local_apic.timer_local_vector_table_entry().write(timer);
+        println!("LAPIC TIMER CNT: {}", apic_current_count.read());
 
-        // println!("LAPIC TIMER CNT: {}", apic_current_count.read());
+        local_apic.timer_local_vector_table_entry().write(timer);
 
-        // let count = {
-        //     let mut count = local_apic.timer_initial_count().read();
+        println!("Pending TIMERLINE (RAW): {:#?}", timer);
+        println!(
+            "FINAL TIMERLINE (RAW): {:#?}",
+            local_apic.timer_local_vector_table_entry().read()
+        );
 
-        //     count.set(0x80000);
+        println!("LAPIC TIMER CNT: {}", apic_current_count.read());
 
-        //     count
-        // };
+        let count = {
+            let mut count = local_apic.timer_initial_count().read();
 
-        // local_apic.timer_initial_count().write(count);
+            count.set(0x80000);
 
-        // println!("LAPIC TIMER CNT: {}", apic_current_count.read());
+            count
+        };
 
-        // loop {
-        //     println!("Local APIC timer: {}", apic_current_count.read());
-        //     waste_time();
-        // }
+        local_apic.timer_initial_count().write(count);
+
+        println!("LAPIC TIMER CNT: {}", apic_current_count.read());
+
+        loop {
+            // println!("Local APIC timer: {}", apic_current_count.read());
+            waste_time();
+        }
     }
 
     // println!("AML Traversal:");
@@ -383,35 +400,35 @@ fn kernel_main(boot_info: &'static mut BootInfo) -> ! {
     //     panic!("No keyboard is available. Bailing out.")
     // }
 
-    acpi_aml::init(aml_context);
+    // acpi_aml::init(aml_context);
 
-    let mut ioapic = unsafe {
-        IoApicBase::new(
-            (apic_info.io_apics.first().unwrap().address as u64 + physical_memory_offset)
-                as *mut u8,
-        )
-    };
+    // let mut ioapic = unsafe {
+    //     IoApicBase::new(
+    //         (apic_info.io_apics.first().unwrap().address as u64 + physical_memory_offset)
+    //             as *mut u8,
+    //     )
+    // };
 
-    let pci_configuration = IoConfiguration::new();
+    // let pci_configuration = IoConfiguration::new();
 
-    // I pretty much just guessed that IRQ 1 on the IOAPIC would be the keyboard since that's the IRQ on the legacy PIC.
-    // Who knows what this will do if it isn't?
-    let mut rte = ioapic.read_redirection_table_entry(1);
+    // // I pretty much just guessed that IRQ 1 on the IOAPIC would be the keyboard since that's the IRQ on the legacy PIC.
+    // // Who knows what this will do if it isn't?
+    // let mut rte = ioapic.read_redirection_table_entry(1);
 
-    rte.set_vector(IRQ::Keyboard.as_u8());
-    rte.set_masked(false);
-    rte.set_polarity_low_active(false);
-    rte.set_trigger_mode_level(false);
-    rte.set_delivery_mode(DeliveryMode::Fixed);
-    rte.set_destination(local_apic.id().read().id());
+    // rte.set_vector(IRQ::Keyboard.as_u8());
+    // rte.set_masked(false);
+    // rte.set_polarity_low_active(false);
+    // rte.set_trigger_mode_level(false);
+    // rte.set_delivery_mode(DeliveryMode::Fixed);
+    // rte.set_destination(local_apic.id().read().id());
 
-    ioapic.write_redirection_table_entry(1, rte);
+    // ioapic.write_redirection_table_entry(1, rte);
 
-    // TODO: this breaks the tests because handle_keypresses is effectively divergent, but wrapping it in #[cfg(not(test))]
-    // makes the IDE unhappy
-    let mut executor = Executor::new();
-    executor.spawn(Task::new(handle_keypresses()));
-    executor.run();
+    // // TODO: this breaks the tests because handle_keypresses is effectively divergent, but wrapping it in #[cfg(not(test))]
+    // // makes the IDE unhappy
+    // let mut executor = Executor::new();
+    // executor.spawn(Task::new(handle_keypresses()));
+    // executor.run();
 
     #[cfg(test)]
     {

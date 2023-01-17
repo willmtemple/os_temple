@@ -14,3 +14,4 @@ lazy_static = { version = "1.4", features = ["spin_no_std"] }
 paste = "1"
 linked_list_allocator = "0.10"
 apic = { git = "https://github.com/rust-osdev/apic" }
+volatile = "0.4"

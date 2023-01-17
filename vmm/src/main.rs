@@ -37,13 +37,13 @@ impl<'m> VirtualMachine<'m> {
         let vm_handle = kvm.create_vm().map_err(VirtualMachineError::CreateVm)?;
 
         let memory = vm_handle
-            .alloc_primary_memory(0xc00000)
+            .alloc_primary_memory(0x1000000)
             .map_err(VirtualMachineError::AllocRam)?;
 
         Ok(VirtualMachine {
             kvm,
             vm_handle,
-            memory: unsafe { std::slice::from_raw_parts_mut(memory as *mut u8, 0xc00000) },
+            memory: unsafe { std::slice::from_raw_parts_mut(memory as *mut u8, 0x1000000) },
         })
     }
 
