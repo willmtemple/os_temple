@@ -164,16 +164,6 @@ extern "x86-interrupt" fn spurious_handler(stack_frame: InterruptStackFrame) {
 extern "x86-interrupt" fn irq0_handler(stack_frame: InterruptStackFrame) {
     print!(".");
 
-    unsafe {
-        let count = &mut crate::APIC.timer_initial_count();
-
-        let mut value = count.read();
-
-        value.set(0x80000);
-
-        count.write(value);
-    }
-
     unsafe { &crate::APIC }.end_of_interrupt().signal();
 }
 

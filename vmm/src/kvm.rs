@@ -1,7 +1,7 @@
 use std::{ffi::c_void, fmt::Display, mem, ptr::null_mut, sync::mpsc::Receiver};
 
 use elfloader::ElfBinary;
-use log::{error, info};
+use log::{error, info, warn};
 use nix::{
     errno::{errno, Errno},
     fcntl::OFlag,
@@ -16,15 +16,14 @@ use thiserror::Error;
 use x86_64::structures::paging::PageTable;
 
 use crate::ffi::kvm::{
-    kvm_irqchip, kvm_lapic_state, kvm_pit_config, kvm_regs, kvm_run, kvm_segment, kvm_sregs,
-    kvm_userspace_memory_region, CR0_AM, CR0_ET, CR0_MP, CR0_NE, CR0_PE, CR0_PG, CR0_WP, CR4_PAE,
-    EFER_LMA, EFER_LME, KVM_EXIT_IO_OUT, PDE64_PRESENT, PDE64_PS, PDE64_RW,
+    kvm_cpuid2, kvm_cpuid_entry2, kvm_irqchip, kvm_pit_config, kvm_regs, kvm_run, kvm_segment,
+    kvm_sregs, kvm_userspace_memory_region, CR0_AM, CR0_ET, CR0_MP, CR0_NE, CR0_PE, CR0_PG, CR0_WP,
+    CR4_PAE, EFER_LMA, EFER_LME, KVM_EXIT_IO_OUT, PDE64_PRESENT, PDE64_PS, PDE64_RW,
 };
-
-use self::ioctls::kvm_get_irqchip;
 
 pub struct KVM {
     pub fd: i32,
+    supported_cpuid: *mut kvm_cpuid2,
 }
 
 #[derive(Debug, Error)]
@@ -212,7 +211,7 @@ mod ioctls {
     };
 
     use crate::ffi::kvm::{
-        kvm_irqchip, kvm_lapic_state, kvm_pit_config, kvm_regs, kvm_sregs,
+        kvm_cpuid2, kvm_irqchip, kvm_lapic_state, kvm_pit_config, kvm_regs, kvm_sregs,
         kvm_userspace_memory_region, KVMIO,
     };
 
@@ -228,6 +227,8 @@ mod ioctls {
     );
 
     ioctl_write_int_bad!(kvm_get_vcpu_mmap_size, request_code_none!(KVMIO, 0x04));
+
+    ioctl_readwrite!(kvm_get_supported_cpuid, KVMIO, 0x05, kvm_cpuid2);
 
     ioctl_write_int_bad!(kvm_create_vcpu, request_code_none!(KVMIO, 0x41));
 
@@ -254,6 +255,10 @@ mod ioctls {
     ioctl_write_ptr!(kvm_set_lapic, KVMIO, 0x8f, kvm_lapic_state);
 
     ioctl_write_ptr!(kvm_create_pit2, KVMIO, 0x77, kvm_pit_config);
+
+    ioctl_write_ptr!(kvm_set_cpuid2, KVMIO, 0x90, kvm_cpuid2);
+
+    ioctl_readwrite!(kvm_get_cpuid2, KVMIO, 0x91, kvm_cpuid2);
 }
 
 impl KVM {
@@ -269,7 +274,58 @@ impl KVM {
             return Err(KvmError::WrongVersion(api_version));
         }
 
-        Ok(Self { fd: sys_fd })
+        // Set CPUID to supported system cpuid
+        let supported_cpuid_ptr = unsafe {
+            let size = mem::size_of::<kvm_cpuid2>() + 5 * mem::size_of::<kvm_cpuid_entry2>();
+            let mut supported_cpuid_ptr = nix::libc::malloc(size) as *mut kvm_cpuid2;
+
+            nix::libc::memset(supported_cpuid_ptr as *mut c_void, 0, size);
+            (*supported_cpuid_ptr).nent = 5;
+
+            let mut res = ioctls::kvm_get_supported_cpuid(sys_fd, supported_cpuid_ptr);
+            warn!("{:?}", res);
+
+            while let Err(e @ (Errno::E2BIG | Errno::ENOMEM)) = res {
+                let mut nent = (*supported_cpuid_ptr).nent as usize;
+
+                if e == Errno::E2BIG {
+                    nent *= 2;
+                }
+
+                warn!("didn't alloc enough space for cpuid2, wants {}", nent);
+
+                nix::libc::free(supported_cpuid_ptr as *mut c_void);
+
+                let size = mem::size_of::<kvm_cpuid2>() + nent * mem::size_of::<kvm_cpuid_entry2>();
+                supported_cpuid_ptr = nix::libc::malloc(size) as *mut kvm_cpuid2;
+
+                nix::libc::memset(supported_cpuid_ptr as *mut c_void, 0, size);
+                (*supported_cpuid_ptr).nent = nent as u32;
+
+                res = ioctls::kvm_get_supported_cpuid(sys_fd, supported_cpuid_ptr);
+            }
+
+            res.map_err_kvm("kvm_get_supported_cpuid")?;
+
+            // kvm_set_cpuid2(cpu_fd, supported_cpuid_ptr).map_err_kvm("kvm_set_cpuid2")?;
+
+            supported_cpuid_ptr
+        };
+
+        // let mut cpuid = KvmCpuId2::new();
+        // let ptr: *mut KvmCpuId2 = &mut cpuid;
+
+        // let res = unsafe { kvm_get_supported_cpuid(sys_fd, ptr as *mut kvm_cpuid2) }
+        //     .map_err_kvm("kvm_get_supported_cpuid");
+
+        // warn!("{:?}", res);
+
+        // res?;
+
+        Ok(Self {
+            fd: sys_fd,
+            supported_cpuid: supported_cpuid_ptr,
+        })
     }
 
     pub fn create_vm(&self) -> Result<VmHandle, KvmError> {
@@ -377,7 +433,7 @@ pub struct CpuHandle {
 }
 
 impl CpuHandle {
-    pub fn new(vm: &VmHandle, sys_fd: i32) -> Result<Self, KvmError> {
+    pub fn new(sys: &KVM, vm: &VmHandle, sys_fd: i32) -> Result<Self, KvmError> {
         let cpu_fd = unsafe { ioctls::kvm_create_vcpu(vm.fd, 0) }.map_err_kvm("kvm_create_vcpu")?;
 
         let vcpu_mmap_size = unsafe { ioctls::kvm_get_vcpu_mmap_size(sys_fd, 0) }
@@ -400,13 +456,16 @@ impl CpuHandle {
             return Err(KvmError::FailedAlloc("kvm_run", Errno::from_i32(errno())));
         }
 
-        unsafe {
-            let mut lapic = kvm_lapic_state { ..mem::zeroed() };
+        // unsafe {
+        //     let mut lapic = kvm_lapic_state { ..mem::zeroed() };
 
-            ioctls::kvm_get_lapic(cpu_fd, &mut lapic).map_err_kvm("kvm_get_lapic")?;
+        //     ioctls::kvm_get_lapic(cpu_fd, &mut lapic).map_err_kvm("kvm_get_lapic")?;
 
-            info!("{:#?}", lapic);
-        }
+        //     // info!("{:#?}", lapic);
+        // }
+
+        unsafe { ioctls::kvm_set_cpuid2(cpu_fd, sys.supported_cpuid) }
+            .map_err_kvm("kvm_set_cpuid")?;
 
         Ok(Self {
             fd: cpu_fd,

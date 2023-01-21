@@ -24,10 +24,10 @@ use vulkano::{
 
 use vulkano_win::VkSurfaceBuild;
 use winit::{
-    dpi::PhysicalSize,
+    dpi::{PhysicalPosition, PhysicalSize},
     event::{Event, WindowEvent},
     event_loop::ControlFlow,
-    window::{Window, WindowBuilder},
+    window::{CursorGrabMode, Window, WindowBuilder},
 };
 use winit::{event_loop::EventLoopBuilder, platform::unix::EventLoopBuilderExtUnix};
 
@@ -187,6 +187,7 @@ pub fn start(signal: Sender<()>, image_buf_offset: usize) {
     );
 
     let mut initialized = false;
+    let mut grabbed: bool = false;
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -196,6 +197,36 @@ pub fn start(signal: Sender<()>, image_buf_offset: usize) {
             } => {
                 info!("display window closed");
                 *control_flow = ControlFlow::Exit;
+            }
+            Event::WindowEvent {
+                event: WindowEvent::Focused(true),
+                ..
+            } => {
+                let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
+
+                if !grabbed {
+                    grabbed = true;
+
+                    window
+                        .set_cursor_grab(CursorGrabMode::Confined)
+                        .expect("failed to capture mouse");
+
+                    window.set_cursor_visible(false);
+                    window.focus_window();
+                    window
+                        .set_cursor_position(PhysicalPosition {
+                            x: 1920 / 2,
+                            y: 1080 / 2,
+                        })
+                        .unwrap();
+                }
+            }
+
+            Event::WindowEvent {
+                event: WindowEvent::Focused(false),
+                ..
+            } => {
+                grabbed = false;
             }
             Event::RedrawEventsCleared => {
                 let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();

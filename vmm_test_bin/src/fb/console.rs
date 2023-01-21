@@ -27,7 +27,7 @@ const FRAMEBUFFERINFO: FrameBufferInfo = FrameBufferInfo {
 };
 // static mut INITIALIZED: bool = false;
 
-const SCALE: u32 = 1;
+const SCALE: u32 = 2;
 
 // pub fn indicate(buffer: &mut [u8], color: (u8, u8, u8, u8)) {
 //     buffer[0] = color.0;
@@ -166,7 +166,8 @@ impl FbConsole {
         self.line_position += 1;
         self.column_position = 0;
 
-        let max_y = unsafe { FRAMEBUFFERINFO }.vertical_resolution - (8 * self.scale);
+        let max_y =
+            unsafe { FRAMEBUFFERINFO }.vertical_resolution - (self.font.height * self.scale);
 
         if (self.line_position as u32 * self.font.height * self.scale) > max_y {
             self.scroll();
@@ -202,7 +203,7 @@ impl FbConsole {
             let buffer = self.buffer();
 
             let single_line_length = (self.scale
-                * self.font.width
+                * self.font.height
                 * FRAMEBUFFERINFO.horizontal_resolution
                 * FRAMEBUFFERINFO.bytes_per_pixel) as usize;
 

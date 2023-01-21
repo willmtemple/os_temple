@@ -49,7 +49,7 @@ impl<'m> VirtualMachine<'m> {
 
     pub fn create_vcpu(&mut self) -> Result<VCPU, VirtualMachineError> {
         Ok(VCPU {
-            cpu: CpuHandle::new(&self.vm_handle, self.kvm.fd)
+            cpu: CpuHandle::new(&self.kvm, &self.vm_handle, self.kvm.fd)
                 .map_err(VirtualMachineError::CreateVCPU)?,
         })
     }
