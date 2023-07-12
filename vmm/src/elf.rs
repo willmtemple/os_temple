@@ -1,17 +1,21 @@
-use std::ffi::c_void;
-
 use elfloader::*;
 use log::{debug, info, warn};
-use nix::libc::memcpy;
+
+use crate::hal::VirtualMachine;
 
 pub struct BasicLoader {
-    memory: *mut c_void,
+    memory: *mut u8,
+    pbase: u64,
     vbase: u64,
 }
 
 impl BasicLoader {
-    pub fn new(memory: *mut c_void, vbase: u64) -> Self {
-        Self { memory, vbase }
+    pub fn new<Vm: VirtualMachine>(memory: *mut u8) -> Self {
+        Self {
+            memory,
+            pbase: Vm::KERN_PHYS_OFFSET.as_u64(),
+            vbase: Vm::KERN_PHYS_OFFSET.as_u64() + Vm::VIRTUAL_2GIB_PBASE_OFFSET.as_u64(),
+        }
     }
 }
 
@@ -35,7 +39,7 @@ impl ElfLoader for BasicLoader {
 
         // The base address of the relocation needs to include the virt base, as we alloc'd and loaded the ELF sections
         // using that offset already.
-        let relocation_address = self.vbase + entry.offset;
+        let relocation_address = self.pbase + entry.offset;
 
         match entry.rtype {
             x86_64(_) => {
@@ -52,7 +56,7 @@ impl ElfLoader for BasicLoader {
 
                 // We handle the relative relocation by simply
                 debug!(
-                    "R_RELATIVE *{:#x} = {:#x}",
+                    "relo/relative: *{:#x} = {:#x}",
                     relocation_address,
                     self.vbase + addend
                 );
@@ -61,7 +65,7 @@ impl ElfLoader for BasicLoader {
             }
             _ => {
                 warn!(
-                    "relo unimplemented rtype {:?} idx={}, off={}, addend={:?}",
+                    "unimplemented rtype {:?} idx={}, off={}, addend={:?}",
                     entry.rtype, entry.index, entry.offset, entry.addend
                 );
                 Ok((/* not implemented */))
@@ -70,16 +74,16 @@ impl ElfLoader for BasicLoader {
     }
 
     fn load(&mut self, _flags: Flags, base: VAddr, region: &[u8]) -> Result<(), ElfLoaderErr> {
-        let start = self.vbase + base;
-        let end = self.vbase + base + region.len() as u64;
+        let start = self.pbase + base;
+        let end = self.pbase + base + region.len() as u64;
         info!("load region into = {:#x} -- {:#x}", start, end);
 
         unsafe {
-            memcpy(
-                self.memory.add(start as usize),
-                region.as_ptr() as *const c_void,
+            core::slice::from_raw_parts_mut(
+                self.memory.add(start as usize) as *mut u8,
                 region.len(),
-            );
+            )
+            .copy_from_slice(region);
         }
 
         Ok(())

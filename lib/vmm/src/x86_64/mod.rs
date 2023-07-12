@@ -34,7 +34,6 @@ pub fn hlt() -> ! {
 pub macro entrypoint($i: ident) {
     #[no_mangle]
     extern "C" fn _start(argc: isize, argv: *const *const isize) -> ! {
-        // unsafe { x86_64::instructions::port::PortWrite::write_to_port(0x0, 123u8) };
         $i();
 
         $crate::hlt();

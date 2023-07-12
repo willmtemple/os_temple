@@ -4,9 +4,14 @@
 use core::fmt::Write;
 // use spin::{Lazy, Mutex};
 
+#[derive(Clone, Copy)]
 struct BasicWritePort(pub u16);
 
-// static IOBASIC: Lazy<Mutex<BasicWritePort>> = Lazy::new(|| Mutex::new(BasicWritePort(0xE9)));
+lazy_static::lazy_static! {
+    static ref IOBASIC: BasicWritePort = {
+        BasicWritePort(0xE9)
+    };
+}
 
 // Teach BasicWritePort how to print a string.
 impl Write for BasicWritePort {
@@ -24,7 +29,8 @@ pub fn _print(args: ::core::fmt::Arguments) {
     use x86_64::instructions::interrupts;
 
     interrupts::without_interrupts(|| {
-        BasicWritePort(0xE9)
+        IOBASIC
+            .clone()
             .write_fmt(args)
             .expect("Printing to iobasic failed");
     });

@@ -1,3 +1,6 @@
 
 [workspace]
-members = ["boot", "vmm", "vmm_test_bin", "blog_os_gen1", "lib/vmm"]
+members = ["vmm", "vmm_test_bin", "lib/vmm"]
+
+[workspace.dependencies]
+lazy_static = "1"

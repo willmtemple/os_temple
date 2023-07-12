@@ -563,11 +563,6 @@ pub fn run(
         sregs.ss = segment;
     }
 
-    let kernel_binary = std::fs::read(path).expect("failed to open kernel ELF");
-
-    let elf = ElfBinary::new(&kernel_binary.as_slice())
-        .expect("failed to parse kernel ELF (is it an ELF file)");
-
     let relo = 0x200000;
 
     let mut loader = crate::elf::BasicLoader::new(memory, relo);

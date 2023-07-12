@@ -12,6 +12,7 @@ extern crate alloc;
 mod allocator;
 mod fb;
 mod gdt;
+mod initrd;
 mod interrupts;
 mod iobasic;
 mod task;
@@ -21,31 +22,28 @@ use core::panic::PanicInfo;
 use apic::{registers::TimerDivideConfigurationValue, Offset};
 pub use fb::console::{print, println};
 
-use crate::{fb::psf::get_current_font, interrupts::IRQ, iobasic::iobasic_println};
-
-libvmm::entrypoint!(kmain);
+use crate::{initrd::MOTD, interrupts::IRQ, iobasic::iobasic_println};
 
 const X86_64_APIC_BASE_MSR: u32 = 0x1B;
-const PHYSICAL_MEMORY_OFFSET: u64 = 0;
+pub const PHYSICAL_MEMORY_OFFSET: u64 = 0xffff_ffff_8000_0000u64;
 
 pub static mut APIC: apic::ApicBase = unsafe { apic::ApicBase::new(core::ptr::null_mut()) };
+
+libvmm::entrypoint!(kmain);
 
 fn kmain() {
     gdt::init();
     interrupts::init_idt();
 
-    println!("Welcome to the other Temple OS!");
+    println!("{}", *MOTD);
 
-    allocator::init_heap();
+    allocator::init_heap().expect("failed to initialize kernel heap");
 
     x86_64::instructions::interrupts::enable();
 
-    iobasic_println!("Font: {:?}", get_current_font());
-
     let local_apic_base =
         (unsafe { x86_64::registers::model_specific::Msr::new(X86_64_APIC_BASE_MSR).read() }
-            & 0xFFFFF000)
-            + PHYSICAL_MEMORY_OFFSET;
+            & 0xFFFFF000);
 
     unsafe {
         APIC = apic::ApicBase::new(local_apic_base as *mut ());

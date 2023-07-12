@@ -68,7 +68,7 @@ define_handler!(stack_segment_fault, true);
 define_handler!(general_protection_fault, true);
 define_handler!(x87_floating_point);
 define_handler!(alignment_check, true);
-define_handler!(machine_check);
+// define_handler!(machine_check);
 define_handler!(simd_floating_point);
 define_handler!(virtualization);
 define_handler!(vmm_communication_exception, true);

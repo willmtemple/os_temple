@@ -3,6 +3,7 @@ extern crate bindgen;
 // use std::env;
 use std::path::PathBuf;
 
+#[cfg(target_os = "linux")]
 fn main() {
     // Tell cargo to look for shared libraries in the specified directory
     // println!("cargo:rustc-link-search=/path/to/lib");
@@ -35,6 +36,9 @@ fn main() {
     //     .write_to_file(out_path.join("kvm.rs"))
     //     .expect("Couldn't write bindings!");
     bindings
-        .write_to_file(PathBuf::from("src").join("ffi").join("kvm_inline.rs"))
+        .write_to_file(PathBuf::from("src").join("ffi").join("kvm.rs"))
         .expect("couldn't write bindings");
 }
+
+#[cfg(target_os = "windows")]
+fn main() {}

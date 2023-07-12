@@ -1,5 +1,17 @@
-static FONT_BYTES: &'static [u8] = include_bytes!("../../data/lat2-terminus16.psfu");
+use crate::initrd::INITRD;
+
 static BLANK: [u8; 128] = [0; 128];
+
+lazy_static::lazy_static! {
+    static ref FONT_BYTES: &'static [u8] = {
+        let fontfile = INITRD
+            .entries()
+            .find(|e| e.filename().eq("lat2-terminus16.psfu"))
+            .expect("failed to load default console font file");
+
+        fontfile.data()
+    };
+}
 
 #[derive(Debug)]
 #[repr(C)]

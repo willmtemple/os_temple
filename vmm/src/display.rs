@@ -1,4 +1,3 @@
-use core::slice;
 use log::info;
 use std::sync::mpsc::Sender;
 use vulkano::{
@@ -23,19 +22,16 @@ use vulkano::{
 };
 
 use vulkano_win::VkSurfaceBuild;
+use winit::event_loop::EventLoopBuilder;
 use winit::{
-    dpi::{PhysicalPosition, PhysicalSize},
+    dpi::PhysicalSize,
     event::{Event, WindowEvent},
     event_loop::ControlFlow,
-    window::{CursorGrabMode, Window, WindowBuilder},
+    window::{Window, WindowBuilder},
 };
-use winit::{event_loop::EventLoopBuilder, platform::unix::EventLoopBuilderExtUnix};
 
-pub fn start(signal: Sender<()>, image_buf_offset: usize) {
-    let image_buf: &mut [u8] =
-        unsafe { slice::from_raw_parts_mut(image_buf_offset as *mut u8, 1920 * 1080 * 4) };
-
-    info!("Initializing display thread.");
+pub fn start(signal: Sender<()>, image_buffer: &mut [u8]) {
+    info!("Initializing display.");
 
     let library = VulkanLibrary::new().expect("no local Vulkan library/DLL");
     let required_extensions = vulkano_win::required_extensions(&library);
@@ -51,7 +47,7 @@ pub fn start(signal: Sender<()>, image_buf_offset: usize) {
 
     let mut event_loop_builder = EventLoopBuilder::new();
 
-    let event_loop = event_loop_builder.with_any_thread(true).build();
+    let event_loop = event_loop_builder.build();
 
     let surface = WindowBuilder::new()
         .with_resizable(false)
@@ -60,9 +56,9 @@ pub fn start(signal: Sender<()>, image_buf_offset: usize) {
             height: 1080,
         })
         .with_title("vmm")
-        .with_always_on_top(true)
+        // .with_always_on_top(true)
         .with_visible(true)
-        .with_decorations(false)
+        // .with_decorations(false)
         .with_transparent(false)
         .build_vk_surface(&event_loop, instance.clone())
         .unwrap();
@@ -187,7 +183,10 @@ pub fn start(signal: Sender<()>, image_buf_offset: usize) {
     );
 
     let mut initialized = false;
-    let mut grabbed: bool = false;
+    // let mut grabbed: bool = false;
+
+    let image_buffer =
+        unsafe { core::slice::from_raw_parts_mut(image_buffer.as_mut_ptr(), image_buffer.len()) };
 
     event_loop.run(move |event, _, control_flow| {
         match event {
@@ -202,31 +201,31 @@ pub fn start(signal: Sender<()>, image_buf_offset: usize) {
                 event: WindowEvent::Focused(true),
                 ..
             } => {
-                let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
+                // let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
 
-                if !grabbed {
-                    grabbed = true;
+                // if !grabbed {
+                //     grabbed = true;
 
-                    window
-                        .set_cursor_grab(CursorGrabMode::Confined)
-                        .expect("failed to capture mouse");
+                //     window
+                //         .set_cursor_grab(CursorGrabMode::Confined)
+                //         .expect("failed to capture mouse");
 
-                    window.set_cursor_visible(false);
-                    window.focus_window();
-                    window
-                        .set_cursor_position(PhysicalPosition {
-                            x: 1920 / 2,
-                            y: 1080 / 2,
-                        })
-                        .unwrap();
-                }
+                //     window.set_cursor_visible(false);
+                //     window.focus_window();
+                //     window
+                //         .set_cursor_position(PhysicalPosition {
+                //             x: 1920 / 2,
+                //             y: 1080 / 2,
+                //         })
+                //         .unwrap();
+                // }
             }
 
             Event::WindowEvent {
                 event: WindowEvent::Focused(false),
                 ..
             } => {
-                grabbed = false;
+                // grabbed = false;
             }
             Event::RedrawEventsCleared => {
                 let window = surface.object().unwrap().downcast_ref::<Window>().unwrap();
@@ -284,7 +283,7 @@ pub fn start(signal: Sender<()>, image_buf_offset: usize) {
                             ..Default::default()
                         },
                         true,
-                        image_buf.iter().map(|v| *v),
+                        image_buffer.iter().map(|v| *v),
                     )
                     .unwrap()
                 };

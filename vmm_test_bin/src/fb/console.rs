@@ -1,8 +1,6 @@
-use font8x8::UnicodeFonts;
-
 use spin::Mutex;
 
-use crate::fb::psf::get_current_font;
+use crate::{fb::psf::get_current_font, PHYSICAL_MEMORY_OFFSET};
 
 use super::psf::PsfFont;
 
@@ -27,7 +25,7 @@ const FRAMEBUFFERINFO: FrameBufferInfo = FrameBufferInfo {
 };
 // static mut INITIALIZED: bool = false;
 
-const SCALE: u32 = 2;
+const SCALE: u32 = 1;
 
 // pub fn indicate(buffer: &mut [u8], color: (u8, u8, u8, u8)) {
 //     buffer[0] = color.0;
@@ -237,7 +235,12 @@ impl FbConsole {
     }
 
     fn buffer(&self) -> &'static mut [u8] {
-        unsafe { core::slice::from_raw_parts_mut((0x3 << 20) as *mut u8, 1920 * 1080 * 4) }
+        unsafe {
+            core::slice::from_raw_parts_mut(
+                (PHYSICAL_MEMORY_OFFSET + (0x3 << 20)) as *mut u8,
+                1920 * 1080 * 4,
+            )
+        }
     }
 }
 

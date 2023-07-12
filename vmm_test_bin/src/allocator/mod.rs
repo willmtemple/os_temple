@@ -3,9 +3,11 @@ use core::ptr::null_mut;
 use fixed_size_block::FixedSizeBlockAllocator;
 use x86_64::structures::paging::{mapper::MapToError, Size4KiB};
 
+use crate::PHYSICAL_MEMORY_OFFSET;
+
 pub mod fixed_size_block;
 
-pub const HEAP_START: usize = 0xb << 20;
+pub const HEAP_START: usize = (PHYSICAL_MEMORY_OFFSET + (0xb << 20)) as usize;
 pub const HEAP_SIZE: usize = 1 * 1024 * 1024; // 1 MiB heap
 
 #[global_allocator]
