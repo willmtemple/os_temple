@@ -15,9 +15,13 @@ vulkano = "0.32"
 vulkano-win = "0.32"
 winit = "0.27"
 libc = "0.2"
+virtio-device = { path = "../lib/virtio/crates/virtio-device" }
+virtio-blk = { path = "../lib/virtio/crates/devices/virtio-blk", features = ["backend-stdio"] }
+virtio-queue = { path = "../lib/virtio/crates/virtio-queue" }
+tempfile = "3"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-libwhp = { git = "https://github.com/insula-rs/libwhp", branch = "master" }
+libwhp = {path = "../lib/whp" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 nix = { version = "0.26", features = ["fs", "ioctl", "feature"] }

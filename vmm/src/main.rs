@@ -1,5 +1,3 @@
-#![feature(once_cell)]
-
 mod elf;
 pub(crate) mod ffi;
 #[cfg(target_os = "linux")]

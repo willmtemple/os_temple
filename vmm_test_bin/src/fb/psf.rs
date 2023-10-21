@@ -1,16 +1,9 @@
-use crate::initrd::INITRD;
+use crate::iobasic::iobasic_println;
 
 static BLANK: [u8; 128] = [0; 128];
 
 lazy_static::lazy_static! {
-    static ref FONT_BYTES: &'static [u8] = {
-        let fontfile = INITRD
-            .entries()
-            .find(|e| e.filename().eq("lat2-terminus16.psfu"))
-            .expect("failed to load default console font file");
-
-        fontfile.data()
-    };
+    static ref FONT_BYTES: &'static [u8] = libvmm::include_bytes_aligned!(PsfFont, "../../initrd/lat2-terminus16.psfu");
 }
 
 #[derive(Debug)]

@@ -1,6 +1,17 @@
-
 [workspace]
-members = ["vmm", "vmm_test_bin", "lib/vmm"]
+resolver = "2"
+members = [
+    "vmm",
+    "vmm_test_bin",
+    "lib/vmm",
+    "lib/whp",
+    "lib/virtio/crates/devices/*",
+    "lib/virtio/crates/virtio-bindings",
+    "lib/virtio/crates/virtio-device",
+    "lib/virtio/crates/virtio-queue",
+    "lib/virtio/crates/virtio-queue-ser",
+    "lib/vm-memory"
+]
 
 [workspace.dependencies]
 lazy_static = "1"

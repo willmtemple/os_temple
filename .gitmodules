@@ -1,0 +1,12 @@
+[submodule "lib/libwhp"]
+	path = lib/libwhp
+	url = git@github.com:willmtemple/libwhp.git
+[submodule "lib/virtio"]
+	path = lib/virtio
+	url = git@github.com:willmtemple/vm-virtio.git
+[submodule "lib/vm-memory"]
+	path = lib/vm-memory
+	url = git@github.com:willmtemple/vm-memory.git
+[submodule "lib/vmm-sys-util"]
+	path = lib/vmm-sys-util
+	url = git@github.com:willmtemple/vmm-sys-util.git

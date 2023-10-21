@@ -148,18 +148,22 @@ impl VirtualCpu for WhpVCPU {
             }
             WHV_RUN_VP_EXIT_REASON::WHvRunVpExitReasonException => Ok(()),
             WHV_RUN_VP_EXIT_REASON::WHvRunVpExitReasonMemoryAccess => {
+                debug!("Memory access exit.");
                 handle_mmio_exit(&mut self.emulator, &mut self.callbacks, &exit);
                 Ok(())
             }
             WHV_RUN_VP_EXIT_REASON::WHvRunVpExitReasonX64IoPortAccess => {
+                // debug!("IO port access exit.");
                 handle_io_port_exit(&mut self.emulator, &mut self.callbacks, &exit);
                 Ok(())
             }
             WHV_RUN_VP_EXIT_REASON::WHvRunVpExitReasonX64Cpuid => {
+                debug!("CPUID exit.");
                 handle_cpuid_exit(&mut self.callbacks.processor.lock().unwrap(), &exit);
                 Ok(())
             }
             WHV_RUN_VP_EXIT_REASON::WHvRunVpExitReasonX64MsrAccess => {
+                debug!("MSR exit.");
                 handle_msr_exit(&mut self.callbacks.processor.lock().unwrap(), &exit);
                 Ok(())
             }
@@ -168,6 +172,7 @@ impl VirtualCpu for WhpVCPU {
                 Ok(())
             }
             WHV_RUN_VP_EXIT_REASON::WHvRunVpExitReasonX64InterruptWindow => {
+                info!("Interrupt window");
                 Err("Interrupt window".into())
             }
             _ => Err(format!("Unexpected exit type: {:?}", exit.ExitReason)),
@@ -404,9 +409,12 @@ fn handle_mmio_exit<T: EmulatorCallbacks>(
     exit_context: &WHV_RUN_VP_EXIT_CONTEXT,
 ) {
     let mem_access_ctx = unsafe { &exit_context.anon_union.MemoryAccess };
+    debug!("Memory access ctx: {:#?}", mem_access_ctx);
     let _status = e
         .try_mmio_emulation(context, &exit_context.VpContext, mem_access_ctx)
         .unwrap();
+
+    debug!("{}", _status.to_string());
 }
 
 fn handle_io_port_exit<T: EmulatorCallbacks>(
@@ -694,7 +702,7 @@ impl EmulatorCallbacks for SampleCallbacks {
         match memory_access.AccessSize {
             8 => match memory_access.Direction {
                 0 => {
-                    let data = &memory_access.Data as *const _ as *mut u64;
+                    let data = (&mut memory_access.Data) as *const _ as *mut u64;
                     unsafe {
                         *data = 0x1000;
                         info!("MMIO read: 0x{:016x} @0x{:x}", *data, addr);
@@ -707,7 +715,7 @@ impl EmulatorCallbacks for SampleCallbacks {
             },
             4 => match memory_access.Direction {
                 0 => {
-                    let data = &memory_access.Data as *const _ as *mut u32;
+                    let data = &mut memory_access.Data as *const _ as *mut u32;
                     unsafe {
                         *data = 0x1000;
                         info!("MMIO read: 0x{:08x} @0x{:x}", *data, addr);
@@ -720,7 +728,7 @@ impl EmulatorCallbacks for SampleCallbacks {
             },
             2 => match memory_access.Direction {
                 0 => {
-                    let data = &memory_access.Data as *const _ as *mut u32;
+                    let data = &mut memory_access.Data as *const _ as *mut u32;
                     unsafe {
                         *data = 0x22bb;
                         info!("MMIO read: 0x{:04x} @0x{:x}", *data, addr);
@@ -733,7 +741,7 @@ impl EmulatorCallbacks for SampleCallbacks {
             },
             1 => match memory_access.Direction {
                 0 => {
-                    let data = &memory_access.Data as *const _ as *mut u32;
+                    let data = &mut memory_access.Data as *const _ as *mut u32;
                     unsafe {
                         *data = 0x58;
                         info!("MMIO read: 0x{:02x} @0x{:x}", *data, addr);
@@ -791,11 +799,9 @@ impl EmulatorCallbacks for SampleCallbacks {
         // *gpa = gva;
         // *translation_result = WHV_TRANSLATE_GVA_RESULT_CODE::WHvTranslateGvaResultSuccess;
 
-        let mut values = [WHV_REGISTER_VALUE::default()];
-
-        self.get_virtual_processor_registers(&[WHV_REGISTER_NAME::WHvX64RegisterCr3], &mut values);
-
-        debug!("Cr3: {:#x}", unsafe { values[0].Reg64 });
+        *gpa = gva - WhpVirtualMachine::VIRTUAL_2GIB_PBASE_OFFSET.as_u64();
+        *translation_result = WHV_TRANSLATE_GVA_RESULT_CODE::WHvTranslateGvaResultSuccess;
+        return S_OK;
 
         let r = match self
             .processor
@@ -809,6 +815,10 @@ impl EmulatorCallbacks for SampleCallbacks {
                 S_OK
             }
             Err(e) => {
+                error!(
+                    "Failed to translate Guest Physical Address: {}",
+                    e.to_string()
+                );
                 *translation_result =
                     WHV_TRANSLATE_GVA_RESULT_CODE::WHvTranslateGvaResultGpaUnmapped;
                 e.result()
@@ -816,8 +826,8 @@ impl EmulatorCallbacks for SampleCallbacks {
         };
 
         debug!(
-            "GVA: {:#x}, GPA: {:#x}, FLAGS: {:#?}",
-            gva, gpa, translate_flags
+            "GVA: {:#x}, GPA: {:#x}, FLAGS: {:#?}, RESULT: {:#?} ({:x})",
+            gva, gpa, translate_flags, translation_result, r as u32
         );
 
         r

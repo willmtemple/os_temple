@@ -1,10 +1,9 @@
 extern crate bindgen;
 
-// use std::env;
-use std::path::PathBuf;
-
 #[cfg(target_os = "linux")]
 fn main() {
+    use std::path::PathBuf;
+
     // Tell cargo to look for shared libraries in the specified directory
     // println!("cargo:rustc-link-search=/path/to/lib");
 

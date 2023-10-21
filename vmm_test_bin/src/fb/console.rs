@@ -25,7 +25,7 @@ const FRAMEBUFFERINFO: FrameBufferInfo = FrameBufferInfo {
 };
 // static mut INITIALIZED: bool = false;
 
-const SCALE: u32 = 1;
+const SCALE: u32 = 2;
 
 // pub fn indicate(buffer: &mut [u8], color: (u8, u8, u8, u8)) {
 //     buffer[0] = color.0;
@@ -86,12 +86,12 @@ unsafe fn write_glyph(
 #[rustfmt::skip]
 const MISSING_GLYPH: [u8; 8] = [
     0b01010101,
-    0b10000000,
-    0b00000001,
-    0b10000000,
-    0b00000001,
-    0b10000000,
-    0b00000001,
+    0b10101010,
+    0b01010101,
+    0b10101010,
+    0b01010101,
+    0b10101010,
+    0b01010101,
     0b10101010,
 ];
 

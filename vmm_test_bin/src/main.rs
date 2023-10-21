@@ -16,6 +16,7 @@ mod initrd;
 mod interrupts;
 mod iobasic;
 mod task;
+mod virtio;
 
 use core::panic::PanicInfo;
 
@@ -108,7 +109,7 @@ fn kmain() {
         local_apic.timer_local_vector_table_entry().write(timer);
     }
 
-    iobasic_println!("Quitting.");
+    // println!("{}", virtio::blk::get_blk_device());
 
     libvmm::hlt();
 }

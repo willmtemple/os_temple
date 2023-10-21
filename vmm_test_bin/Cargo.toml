@@ -15,6 +15,10 @@ linked_list_allocator = "0.10"
 apic = { git = "https://github.com/rust-osdev/apic" }
 volatile = "0.4"
 tar-no-std = "0.1.8"
+virtio-drivers = "0.6"
 
 [build-dependencies]
 itertools = "0.10"
+
+[profile.release]
+lto = true
